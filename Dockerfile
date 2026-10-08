@@ -25,4 +25,4 @@ RUN mkdir -p /tmp/downloads
 
 EXPOSE 10000
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "10000"]
+CMD ["sh", "-c", "cd /app/bgutil-ytdlp-pot-provider/server && node build/main.js & uvicorn app:app --host 0.0.0.0 --port 10000"]
