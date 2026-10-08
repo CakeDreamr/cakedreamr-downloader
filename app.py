@@ -307,7 +307,7 @@ async def download_video(request: DownloadRequest):
             "--js-runtimes",
             "deno",
             "--extractor-args",
-            "youtube:player_client=web,android_vr,tv_downgraded",
+            "youtube:player_client=web",
             "--no-playlist",
             "--max-filesize",
             "500M",
