@@ -1,6 +1,7 @@
 import shutil
 import uuid
 import subprocess
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -80,6 +81,91 @@ def get_media_type(filename):
     return "video/mp4"
 
 
+def is_x_url(url):
+    return (
+        "x.com/" in url.lower()
+        or
+        "twitter.com/" in url.lower()
+    )
+
+
+def metadata_says_gif(metadata):
+    text_parts = []
+
+    def collect(value):
+        if isinstance(value, str):
+            text_parts.append(value.lower())
+
+        elif isinstance(value, dict):
+            for key, item in value.items():
+
+                if key.lower() in {
+                    "type",
+                    "media_type",
+                    "content_type",
+                    "format_note",
+                    "format",
+                    "ext",
+                    "protocol"
+                }:
+                    if isinstance(item, str):
+                        text_parts.append(item.lower())
+
+                collect(item)
+
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    collect(metadata)
+
+    combined = " ".join(text_parts)
+
+    gif_markers = [
+        "animated_gif",
+        "animated gif",
+        "image/gif"
+    ]
+
+    return any(
+        marker in combined
+        for marker in gif_markers
+    )
+
+
+def get_yt_dlp_metadata(url):
+    command = [
+        "yt-dlp",
+        "--js-runtimes",
+        "deno",
+        "--extractor-args",
+        "youtube:player_client=web,android_vr,tv_downgraded",
+        "--no-playlist",
+        "--dump-single-json",
+        "--skip-download",
+        url
+    ]
+
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=120
+    )
+
+    if result.returncode != 0:
+        return None
+
+    try:
+        return json.loads(
+            result.stdout
+        )
+
+    except json.JSONDecodeError:
+        return None
+
+
 @app.get("/")
 async def root():
     return {
@@ -115,6 +201,26 @@ async def download_video(request: DownloadRequest):
     )
 
     try:
+
+        metadata = get_yt_dlp_metadata(
+            url
+        )
+
+        detected_gif = False
+
+        if metadata is not None:
+            detected_gif = metadata_says_gif(
+                metadata
+            )
+
+        if request.format == "gif":
+            should_make_gif = True
+
+        elif request.format == "mp4":
+            should_make_gif = False
+
+        else:
+            should_make_gif = detected_gif
 
         output_template = str(
             job_dir /
@@ -182,7 +288,7 @@ async def download_video(request: DownloadRequest):
             source_file.suffix.lower()
         )
 
-        if request.format == "gif":
+        if should_make_gif:
 
             output_name = (
                 get_base_name(
