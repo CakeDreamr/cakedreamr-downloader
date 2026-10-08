@@ -146,10 +146,6 @@ def x_post_is_gif(metadata):
 def get_metadata(url):
     command = [
         "yt-dlp",
-        "--js-runtimes",
-        "deno",
-        "--extractor-args",
-        "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
         "--no-playlist",
         "--dump-single-json",
         "--skip-download",
@@ -232,130 +228,6 @@ async def root():
     }
 
 
-@app.get("/debug/youtube")
-async def debug_youtube(url: str = ""):
-
-    try:
-        yt_dlp_version = subprocess.run(
-            [
-                "yt-dlp",
-                "--version"
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30
-        )
-
-        yt_dlp_version_text = (
-            yt_dlp_version.stdout.strip()
-            or
-            yt_dlp_version.stderr.strip()
-        )
-
-    except Exception as error:
-        yt_dlp_version_text = str(error)
-
-    try:
-        node_version = subprocess.run(
-            [
-                "node",
-                "--version"
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30
-        )
-
-        node_version_text = (
-            node_version.stdout.strip()
-            or
-            node_version.stderr.strip()
-        )
-
-    except Exception as error:
-        node_version_text = str(error)
-
-    result = {
-        "bgutil_http_url": "http://127.0.0.1:4416",
-        "yt_dlp_version": yt_dlp_version_text,
-        "node_version": node_version_text
-    }
-
-    if not url.strip():
-
-        result["message"] = (
-            "Add ?url=YOUTUBE_URL to run the full yt-dlp "
-            "YouTube provider test."
-        )
-
-        return result
-
-    test_command = [
-        "yt-dlp",
-        "--verbose",
-        "--simulate",
-        "--skip-download",
-        "--js-runtimes",
-        "deno",
-        "--extractor-args",
-        "youtube:player-client=web",
-        "--extractor-args",
-        "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
-        "--no-playlist",
-        url.strip()
-    ]
-
-    try:
-
-        test = subprocess.run(
-            test_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=120
-        )
-
-        output = test.stdout
-
-        result["test_return_code"] = test.returncode
-        result["provider_detected"] = (
-            "PO Token Providers" in output
-            and
-            "bgutil:http" in output
-        )
-        result["output"] = output[-12000:]
-
-    except subprocess.TimeoutExpired as error:
-
-        output = (
-            error.stdout
-            if isinstance(error.stdout, str)
-            else ""
-        )
-
-        result["test_return_code"] = None
-        result["provider_detected"] = (
-            "PO Token Providers" in output
-            and
-            "bgutil" in output
-        )
-        result["output"] = (
-            output[-12000:]
-            +
-            "\n\nDEBUG TEST TIMED OUT."
-        )
-
-    except Exception as error:
-
-        result["test_return_code"] = None
-        result["provider_detected"] = False
-        result["output"] = str(error)
-
-    return result
-
-
 @app.post("/download")
 async def download_video(request: DownloadRequest):
 
@@ -430,12 +302,6 @@ async def download_video(request: DownloadRequest):
 
         command = [
             "yt-dlp",
-            "--js-runtimes",
-            "deno",
-            "--extractor-args",
-            "youtube:player-client=web",
-            "--extractor-args",
-            "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
             "--no-playlist",
             "--max-filesize",
             "500M",
