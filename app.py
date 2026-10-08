@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
 
@@ -150,6 +151,8 @@ async def download_video(request: DownloadRequest):
 
             error = result.stderr[-3000:]
 
+            cleanup_job(job_dir)
+
             raise HTTPException(
                 status_code=500,
                 detail=error
@@ -161,12 +164,16 @@ async def download_video(request: DownloadRequest):
 
         if source_file is None:
 
+            cleanup_job(job_dir)
+
             raise HTTPException(
                 status_code=500,
                 detail="yt-dlp did not produce a file."
             )
 
         if source_file.stat().st_size > MAX_DOWNLOAD_SIZE:
+
+            cleanup_job(job_dir)
 
             raise HTTPException(
                 status_code=413,
@@ -200,6 +207,8 @@ async def download_video(request: DownloadRequest):
 
             if ffmpeg.returncode != 0:
 
+                cleanup_job(job_dir)
+
                 raise HTTPException(
                     status_code=500,
                     detail=ffmpeg.stderr[-3000:]
@@ -213,6 +222,8 @@ async def download_video(request: DownloadRequest):
 
         if source_file.stat().st_size > MAX_DOWNLOAD_SIZE:
 
+            cleanup_job(job_dir)
+
             raise HTTPException(
                 status_code=413,
                 detail="The converted file is too large."
@@ -225,18 +236,31 @@ async def download_video(request: DownloadRequest):
                 "image/gif"
                 if request.format == "gif"
                 else "video/mp4"
+            ),
+            background=BackgroundTask(
+                cleanup_job,
+                job_dir
             )
         )
 
     except subprocess.TimeoutExpired:
+
+        cleanup_job(job_dir)
 
         raise HTTPException(
             status_code=504,
             detail="Download timed out."
         )
 
-    finally:
+    except HTTPException:
 
-        cleanup_job(
-            job_dir
+        raise
+
+    except Exception as error:
+
+        cleanup_job(job_dir)
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(error)
         )
