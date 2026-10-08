@@ -300,7 +300,7 @@ async def debug_youtube(url: str = ""):
         "--js-runtimes",
         "deno",
         "--extractor-args",
-        "youtube:player-client=mweb",
+        "youtube:player-client=web",
         "--extractor-args",
         "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
         "--no-playlist",
