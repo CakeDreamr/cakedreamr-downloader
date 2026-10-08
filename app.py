@@ -33,6 +33,10 @@ DOWNLOAD_DIR.mkdir(
 
 MAX_DOWNLOAD_SIZE = 500 * 1024 * 1024
 
+BGUTIL_SCRIPT = Path(
+    "/app/bgutil-ytdlp-pot-provider/server/build/generate_once.js"
+)
+
 
 class DownloadRequest(BaseModel):
     url: str
@@ -228,6 +232,140 @@ async def root():
         "status": "online",
         "service": "CakeDreamr Video Downloader"
     }
+
+
+@app.get("/debug/youtube")
+async def debug_youtube(url: str = ""):
+
+    script_exists = BGUTIL_SCRIPT.is_file()
+
+    script_size = (
+        BGUTIL_SCRIPT.stat().st_size
+        if script_exists
+        else None
+    )
+
+    try:
+        yt_dlp_version = subprocess.run(
+            [
+                "yt-dlp",
+                "--version"
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30
+        )
+
+        yt_dlp_version_text = (
+            yt_dlp_version.stdout.strip()
+            or
+            yt_dlp_version.stderr.strip()
+        )
+
+    except Exception as error:
+        yt_dlp_version_text = str(error)
+
+    try:
+        node_version = subprocess.run(
+            [
+                "node",
+                "--version"
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30
+        )
+
+        node_version_text = (
+            node_version.stdout.strip()
+            or
+            node_version.stderr.strip()
+        )
+
+    except Exception as error:
+        node_version_text = str(error)
+
+    result = {
+        "bgutil_script_exists": script_exists,
+        "bgutil_script_size": script_size,
+        "bgutil_script_path": str(BGUTIL_SCRIPT),
+        "yt_dlp_version": yt_dlp_version_text,
+        "node_version": node_version_text
+    }
+
+    if not url.strip():
+
+        result["message"] = (
+            "Add ?url=YOUTUBE_URL to run the full yt-dlp "
+            "YouTube provider test."
+        )
+
+        return result
+
+    test_command = [
+        "yt-dlp",
+        "--verbose",
+        "--simulate",
+        "--skip-download",
+        "--js-runtimes",
+        "deno",
+        "--extractor-args",
+        "youtube:player-client=mweb",
+        "--extractor-args",
+        "youtubepot-bgutilscript:script_path=/app/bgutil-ytdlp-pot-provider/server/build/generate_once.js",
+        "--no-playlist",
+        url.strip()
+    ]
+
+    try:
+
+        test = subprocess.run(
+            test_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=120
+        )
+
+        output = test.stdout
+
+        result["test_return_code"] = test.returncode
+        result["provider_detected"] = (
+            "PO Token Providers" in output
+            and
+            "bgutil" in output
+        )
+        result["output"] = output[-12000:]
+
+    except subprocess.TimeoutExpired as error:
+
+        output = (
+            error.stdout
+            if isinstance(error.stdout, str)
+            else ""
+        )
+
+        result["test_return_code"] = None
+        result["provider_detected"] = (
+            "PO Token Providers" in output
+            and
+            "bgutil" in output
+        )
+        result["output"] = (
+            output[-12000:]
+            +
+            "\n\nDEBUG TEST TIMED OUT."
+        )
+
+    except Exception as error:
+
+        result["test_return_code"] = None
+        result["provider_detected"] = False
+        result["output"] = str(error)
+
+    return result
 
 
 @app.post("/download")
