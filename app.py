@@ -99,6 +99,8 @@ async def download_video(request: DownloadRequest):
 
             command = [
                 "yt-dlp",
+                "--js-runtimes",
+                "deno",
                 "--no-playlist",
                 "--max-filesize",
                 "500M",
@@ -120,6 +122,8 @@ async def download_video(request: DownloadRequest):
 
             command = [
                 "yt-dlp",
+                "--js-runtimes",
+                "deno",
                 "--no-playlist",
                 "--max-filesize",
                 "500M",
