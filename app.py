@@ -33,10 +33,6 @@ DOWNLOAD_DIR.mkdir(
 
 MAX_DOWNLOAD_SIZE = 500 * 1024 * 1024
 
-BGUTIL_SCRIPT = Path(
-    "/app/bgutil-ytdlp-pot-provider/server/build/generate_once.js"
-)
-
 
 class DownloadRequest(BaseModel):
     url: str
@@ -152,6 +148,8 @@ def get_metadata(url):
         "yt-dlp",
         "--js-runtimes",
         "deno",
+        "--extractor-args",
+        "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
         "--no-playlist",
         "--dump-single-json",
         "--skip-download",
@@ -237,14 +235,6 @@ async def root():
 @app.get("/debug/youtube")
 async def debug_youtube(url: str = ""):
 
-    script_exists = BGUTIL_SCRIPT.is_file()
-
-    script_size = (
-        BGUTIL_SCRIPT.stat().st_size
-        if script_exists
-        else None
-    )
-
     try:
         yt_dlp_version = subprocess.run(
             [
@@ -288,9 +278,7 @@ async def debug_youtube(url: str = ""):
         node_version_text = str(error)
 
     result = {
-        "bgutil_script_exists": script_exists,
-        "bgutil_script_size": script_size,
-        "bgutil_script_path": str(BGUTIL_SCRIPT),
+        "bgutil_http_url": "http://127.0.0.1:4416",
         "yt_dlp_version": yt_dlp_version_text,
         "node_version": node_version_text
     }
@@ -314,7 +302,7 @@ async def debug_youtube(url: str = ""):
         "--extractor-args",
         "youtube:player-client=mweb",
         "--extractor-args",
-        "youtubepot-bgutilscript:script_path=/app/bgutil-ytdlp-pot-provider/server/build/generate_once.js",
+        "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
         "--no-playlist",
         url.strip()
     ]
@@ -335,7 +323,7 @@ async def debug_youtube(url: str = ""):
         result["provider_detected"] = (
             "PO Token Providers" in output
             and
-            "bgutil" in output
+            "bgutil:http" in output
         )
         result["output"] = output[-12000:]
 
@@ -447,7 +435,7 @@ async def download_video(request: DownloadRequest):
             "--extractor-args",
             "youtube:player-client=mweb",
             "--extractor-args",
-            "youtubepot-bgutilscript:script_path=/app/bgutil-ytdlp-pot-provider/server/build/generate_once.js",
+            "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
             "--no-playlist",
             "--max-filesize",
             "500M",
