@@ -1,4 +1,3 @@
-import os
 import shutil
 import uuid
 import subprocess
@@ -33,7 +32,7 @@ MAX_DOWNLOAD_SIZE = 500 * 1024 * 1024
 
 class DownloadRequest(BaseModel):
     url: str
-    format: str = "mp4"
+    format: str = "auto"
 
 
 def cleanup_job(job_dir):
@@ -56,6 +55,31 @@ def find_output_file(job_dir):
     return files[0]
 
 
+def get_base_name(filename):
+    return Path(filename).stem
+
+
+def get_media_type(filename):
+    extension = Path(filename).suffix.lower()
+
+    if extension == ".gif":
+        return "image/gif"
+
+    if extension == ".webm":
+        return "video/webm"
+
+    if extension == ".mov":
+        return "video/quicktime"
+
+    if extension == ".mkv":
+        return "video/x-matroska"
+
+    if extension == ".avi":
+        return "video/x-msvideo"
+
+    return "video/mp4"
+
+
 @app.get("/")
 async def root():
     return {
@@ -67,10 +91,10 @@ async def root():
 @app.post("/download")
 async def download_video(request: DownloadRequest):
 
-    if request.format not in {"mp4", "gif"}:
+    if request.format not in {"auto", "mp4", "gif"}:
         raise HTTPException(
             status_code=400,
-            detail="Format must be mp4 or gif."
+            detail="Format must be auto, mp4 or gif."
         )
 
     url = request.url.strip()
@@ -84,6 +108,7 @@ async def download_video(request: DownloadRequest):
     job_id = uuid.uuid4().hex
 
     job_dir = DOWNLOAD_DIR / job_id
+
     job_dir.mkdir(
         parents=True,
         exist_ok=True
@@ -91,53 +116,26 @@ async def download_video(request: DownloadRequest):
 
     try:
 
-        if request.format == "mp4":
+        output_template = str(
+            job_dir /
+            "%(title).150B.%(ext)s"
+        )
 
-            output_template = str(
-                job_dir /
-                "%(title).150B.%(ext)s"
-            )
-
-            command = [
-                "yt-dlp",
-                "--js-runtimes",
-                "deno",
-                "--extractor-args",
-                "youtube:player_client=web,android_vr,tv_downgraded",
-                "--no-playlist",
-                "--max-filesize",
-                "500M",
-                "--merge-output-format",
-                "mp4",
-                "-f",
-                "bv*+ba/b",
-                "-o",
-                output_template,
-                url
-            ]
-
-        else:
-
-            video_template = str(
-                job_dir /
-                "source.%(ext)s"
-            )
-
-            command = [
-                "yt-dlp",
-                "--js-runtimes",
-                "deno",
-                "--extractor-args",
-                "youtube:player_client=web,android_vr,tv_downgraded",
-                "--no-playlist",
-                "--max-filesize",
-                "500M",
-                "-f",
-                "bv*+ba/b",
-                "-o",
-                video_template,
-                url
-            ]
+        command = [
+            "yt-dlp",
+            "--js-runtimes",
+            "deno",
+            "--extractor-args",
+            "youtube:player_client=web,android_vr,tv_downgraded",
+            "--no-playlist",
+            "--max-filesize",
+            "500M",
+            "-f",
+            "bv*+ba/b",
+            "-o",
+            output_template,
+            url
+        ]
 
         result = subprocess.run(
             command,
@@ -180,11 +178,22 @@ async def download_video(request: DownloadRequest):
                 detail="The downloaded file is too large."
             )
 
+        source_extension = (
+            source_file.suffix.lower()
+        )
+
         if request.format == "gif":
+
+            output_name = (
+                get_base_name(
+                    source_file.name
+                ) +
+                ".gif"
+            )
 
             gif_file = (
                 job_dir /
-                "download.gif"
+                output_name
             )
 
             ffmpeg = subprocess.run(
@@ -220,6 +229,124 @@ async def download_video(request: DownloadRequest):
 
             source_file = gif_file
 
+        elif request.format == "mp4":
+
+            if source_extension != ".mp4":
+
+                output_name = (
+                    get_base_name(
+                        source_file.name
+                    ) +
+                    ".mp4"
+                )
+
+                mp4_file = (
+                    job_dir /
+                    output_name
+                )
+
+                ffmpeg = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        str(source_file),
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "veryfast",
+                        "-crf",
+                        "23",
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        "192k",
+                        "-movflags",
+                        "+faststart",
+                        str(mp4_file)
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=300
+                )
+
+                if ffmpeg.returncode != 0:
+
+                    cleanup_job(job_dir)
+
+                    raise HTTPException(
+                        status_code=500,
+                        detail=ffmpeg.stderr[-3000:]
+                    )
+
+                source_file.unlink(
+                    missing_ok=True
+                )
+
+                source_file = mp4_file
+
+        else:
+
+            if source_extension == ".gif":
+
+                pass
+
+            elif source_extension != ".mp4":
+
+                output_name = (
+                    get_base_name(
+                        source_file.name
+                    ) +
+                    ".mp4"
+                )
+
+                mp4_file = (
+                    job_dir /
+                    output_name
+                )
+
+                ffmpeg = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        str(source_file),
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "veryfast",
+                        "-crf",
+                        "23",
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        "192k",
+                        "-movflags",
+                        "+faststart",
+                        str(mp4_file)
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=300
+                )
+
+                if ffmpeg.returncode != 0:
+
+                    cleanup_job(job_dir)
+
+                    raise HTTPException(
+                        status_code=500,
+                        detail=ffmpeg.stderr[-3000:]
+                    )
+
+                source_file.unlink(
+                    missing_ok=True
+                )
+
+                source_file = mp4_file
+
         if source_file.stat().st_size > MAX_DOWNLOAD_SIZE:
 
             cleanup_job(job_dir)
@@ -232,10 +359,8 @@ async def download_video(request: DownloadRequest):
         return FileResponse(
             path=str(source_file),
             filename=source_file.name,
-            media_type=(
-                "image/gif"
-                if request.format == "gif"
-                else "video/mp4"
+            media_type=get_media_type(
+                source_file.name
             ),
             background=BackgroundTask(
                 cleanup_job,
