@@ -433,7 +433,7 @@ async def download_video(request: DownloadRequest):
             "--js-runtimes",
             "deno",
             "--extractor-args",
-            "youtube:player-client=mweb",
+            "youtube:player-client=web",
             "--extractor-args",
             "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
             "--no-playlist",
