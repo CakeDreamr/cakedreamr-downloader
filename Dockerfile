@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl unzip git \
+    && apt-get install -y --no-install-recommends ffmpeg curl unzip git nodejs npm \
     && curl -fsSL https://deno.land/install.sh | sh \
     && mv /root/.deno/bin/deno /usr/local/bin/deno \
     && rm -rf /var/lib/apt/lists/*
@@ -14,8 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 RUN git clone --single-branch --branch 2.0.0 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /app/bgutil-ytdlp-pot-provider \
     && cd /app/bgutil-ytdlp-pot-provider/server \
-    && deno install --allow-scripts=npm:canvas --frozen \
-    && deno cache --frozen src/main.ts
+    && npm ci \
+    && npx tsc
 
 COPY app.py .
 
