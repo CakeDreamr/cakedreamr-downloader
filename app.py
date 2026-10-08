@@ -26,7 +26,10 @@ app.add_middleware(
 
 
 DOWNLOAD_DIR = Path("/tmp/downloads")
-DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+DOWNLOAD_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
 
 MAX_DOWNLOAD_SIZE = 500 * 1024 * 1024
 
@@ -82,64 +85,69 @@ def get_media_type(filename):
 
 
 def is_x_url(url):
+    lowered = url.lower()
+
     return (
-        "x.com/" in url.lower()
+        "x.com/" in lowered
         or
-        "twitter.com/" in url.lower()
+        "twitter.com/" in lowered
     )
 
 
-def metadata_says_gif(metadata):
-    text_parts = []
+def x_post_is_gif(metadata):
+    if not isinstance(metadata, dict):
+        return False
 
-    def collect(value):
-        if isinstance(value, str):
-            text_parts.append(value.lower())
+    entries = [
+        metadata
+    ]
 
-        elif isinstance(value, dict):
-            for key, item in value.items():
+    while entries:
 
-                if key.lower() in {
+        current = entries.pop()
+
+        if isinstance(current, dict):
+
+            for key, value in current.items():
+
+                key_lower = str(key).lower()
+
+                if key_lower in {
                     "type",
                     "media_type",
                     "content_type",
-                    "format_note",
-                    "format",
-                    "ext",
-                    "protocol"
+                    "media_type_string"
                 }:
-                    if isinstance(item, str):
-                        text_parts.append(item.lower())
 
-                collect(item)
+                    if (
+                        isinstance(value, str)
+                        and
+                        value.lower() in {
+                            "animated_gif",
+                            "animated gif",
+                            "gif"
+                        }
+                    ):
+                        return True
 
-        elif isinstance(value, list):
-            for item in value:
-                collect(item)
+                if isinstance(value, (dict, list)):
+                    entries.append(value)
 
-    collect(metadata)
+        elif isinstance(current, list):
 
-    combined = " ".join(text_parts)
+            for value in current:
 
-    gif_markers = [
-        "animated_gif",
-        "animated gif",
-        "image/gif"
-    ]
+                if isinstance(value, (dict, list)):
+                    entries.append(value)
 
-    return any(
-        marker in combined
-        for marker in gif_markers
-    )
+    return False
 
 
-def get_yt_dlp_metadata(url):
+def get_metadata(url):
     command = [
         "yt-dlp",
         "--js-runtimes",
         "deno",
-        "--extractor-args",
-        "youtube:player_client=web,android_vr,tv_downgraded",
         "--no-playlist",
         "--dump-single-json",
         "--skip-download",
@@ -166,6 +174,54 @@ def get_yt_dlp_metadata(url):
         return None
 
 
+def convert_to_gif(source_file, output_file):
+    return subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_file),
+            "-vf",
+            "fps=15,scale=720:-1:flags=lanczos",
+            "-loop",
+            "0",
+            str(output_file)
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=300
+    )
+
+
+def convert_to_mp4(source_file, output_file):
+    return subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_file),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            str(output_file)
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=300
+    )
+
+
 @app.get("/")
 async def root():
     return {
@@ -177,15 +233,21 @@ async def root():
 @app.post("/download")
 async def download_video(request: DownloadRequest):
 
-    if request.format not in {"auto", "mp4", "gif"}:
+    if request.format not in {
+        "auto",
+        "mp4",
+        "gif"
+    }:
         raise HTTPException(
             status_code=400,
-            detail="Format must be auto, mp4 or gif."
+            detail="Format must be auto, mp4 or gif. dumbass"
         )
 
     url = request.url.strip()
 
-    if not url.startswith(("http://", "https://")):
+    if not url.startswith(
+        ("http://", "https://")
+    ):
         raise HTTPException(
             status_code=400,
             detail="Invalid URL."
@@ -193,7 +255,10 @@ async def download_video(request: DownloadRequest):
 
     job_id = uuid.uuid4().hex
 
-    job_dir = DOWNLOAD_DIR / job_id
+    job_dir = (
+        DOWNLOAD_DIR /
+        job_id
+    )
 
     job_dir.mkdir(
         parents=True,
@@ -202,25 +267,35 @@ async def download_video(request: DownloadRequest):
 
     try:
 
-        metadata = get_yt_dlp_metadata(
-            url
-        )
+        detected_x_gif = False
 
-        detected_gif = False
+        if (
+            request.format == "auto"
+            and
+            is_x_url(url)
+        ):
 
-        if metadata is not None:
-            detected_gif = metadata_says_gif(
-                metadata
+            metadata = get_metadata(
+                url
             )
 
-        if request.format == "gif":
-            should_make_gif = True
+            if metadata is not None:
 
-        elif request.format == "mp4":
-            should_make_gif = False
+                detected_x_gif = (
+                    x_post_is_gif(
+                        metadata
+                    )
+                )
 
-        else:
-            should_make_gif = detected_gif
+        should_make_gif = (
+            request.format == "gif"
+            or
+            (
+                request.format == "auto"
+                and
+                detected_x_gif
+            )
+        )
 
         output_template = str(
             job_dir /
@@ -255,29 +330,41 @@ async def download_video(request: DownloadRequest):
 
             error = result.stderr[-3000:]
 
-            cleanup_job(job_dir)
+            cleanup_job(
+                job_dir
+            )
 
             raise HTTPException(
                 status_code=500,
                 detail=error
             )
 
-        source_file = find_output_file(
-            job_dir
+        source_file = (
+            find_output_file(
+                job_dir
+            )
         )
 
         if source_file is None:
 
-            cleanup_job(job_dir)
+            cleanup_job(
+                job_dir
+            )
 
             raise HTTPException(
                 status_code=500,
                 detail="yt-dlp did not produce a file."
             )
 
-        if source_file.stat().st_size > MAX_DOWNLOAD_SIZE:
+        if (
+            source_file.stat().st_size
+            >
+            MAX_DOWNLOAD_SIZE
+        ):
 
-            cleanup_job(job_dir)
+            cleanup_job(
+                job_dir
+            )
 
             raise HTTPException(
                 status_code=413,
@@ -293,7 +380,8 @@ async def download_video(request: DownloadRequest):
             output_name = (
                 get_base_name(
                     source_file.name
-                ) +
+                )
+                +
                 ".gif"
             )
 
@@ -302,27 +390,16 @@ async def download_video(request: DownloadRequest):
                 output_name
             )
 
-            ffmpeg = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    str(source_file),
-                    "-vf",
-                    "fps=15,scale=720:-1:flags=lanczos",
-                    "-loop",
-                    "0",
-                    str(gif_file)
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=300
+            ffmpeg = convert_to_gif(
+                source_file,
+                gif_file
             )
 
             if ffmpeg.returncode != 0:
 
-                cleanup_job(job_dir)
+                cleanup_job(
+                    job_dir
+                )
 
                 raise HTTPException(
                     status_code=500,
@@ -342,7 +419,8 @@ async def download_video(request: DownloadRequest):
                 output_name = (
                     get_base_name(
                         source_file.name
-                    ) +
+                    )
+                    +
                     ".mp4"
                 )
 
@@ -351,35 +429,16 @@ async def download_video(request: DownloadRequest):
                     output_name
                 )
 
-                ffmpeg = subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-y",
-                        "-i",
-                        str(source_file),
-                        "-c:v",
-                        "libx264",
-                        "-preset",
-                        "veryfast",
-                        "-crf",
-                        "23",
-                        "-c:a",
-                        "aac",
-                        "-b:a",
-                        "192k",
-                        "-movflags",
-                        "+faststart",
-                        str(mp4_file)
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=300
+                ffmpeg = convert_to_mp4(
+                    source_file,
+                    mp4_file
                 )
 
                 if ffmpeg.returncode != 0:
 
-                    cleanup_job(job_dir)
+                    cleanup_job(
+                        job_dir
+                    )
 
                     raise HTTPException(
                         status_code=500,
@@ -403,7 +462,8 @@ async def download_video(request: DownloadRequest):
                 output_name = (
                     get_base_name(
                         source_file.name
-                    ) +
+                    )
+                    +
                     ".mp4"
                 )
 
@@ -412,35 +472,16 @@ async def download_video(request: DownloadRequest):
                     output_name
                 )
 
-                ffmpeg = subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-y",
-                        "-i",
-                        str(source_file),
-                        "-c:v",
-                        "libx264",
-                        "-preset",
-                        "veryfast",
-                        "-crf",
-                        "23",
-                        "-c:a",
-                        "aac",
-                        "-b:a",
-                        "192k",
-                        "-movflags",
-                        "+faststart",
-                        str(mp4_file)
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=300
+                ffmpeg = convert_to_mp4(
+                    source_file,
+                    mp4_file
                 )
 
                 if ffmpeg.returncode != 0:
 
-                    cleanup_job(job_dir)
+                    cleanup_job(
+                        job_dir
+                    )
 
                     raise HTTPException(
                         status_code=500,
@@ -453,9 +494,15 @@ async def download_video(request: DownloadRequest):
 
                 source_file = mp4_file
 
-        if source_file.stat().st_size > MAX_DOWNLOAD_SIZE:
+        if (
+            source_file.stat().st_size
+            >
+            MAX_DOWNLOAD_SIZE
+        ):
 
-            cleanup_job(job_dir)
+            cleanup_job(
+                job_dir
+            )
 
             raise HTTPException(
                 status_code=413,
@@ -476,7 +523,9 @@ async def download_video(request: DownloadRequest):
 
     except subprocess.TimeoutExpired:
 
-        cleanup_job(job_dir)
+        cleanup_job(
+            job_dir
+        )
 
         raise HTTPException(
             status_code=504,
@@ -489,7 +538,9 @@ async def download_video(request: DownloadRequest):
 
     except Exception as error:
 
-        cleanup_job(job_dir)
+        cleanup_job(
+            job_dir
+        )
 
         raise HTTPException(
             status_code=500,
